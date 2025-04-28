@@ -240,7 +240,7 @@ void USkillData::TriggerEffect(int32 EffectIndex, AActor* OwnerActor, FVector Cu
         return;
     }
 
-    UObject* SpawnedInstance = Effect->StartEffect(OwnerActor,CustomLocation, CustomRotation);
+    UObject* SpawnedInstance = Effect->StartEffect(OwnerActor, CustomLocation, CustomRotation);
     if (SpawnedInstance)
     {
         TArray<UObject*>& InstanceArray = RunningEffectInstances.FindOrAdd(EffectIndex);

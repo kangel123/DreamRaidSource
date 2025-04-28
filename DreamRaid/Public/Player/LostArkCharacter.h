@@ -6,6 +6,7 @@
 #include "PlayerStatsComponent.h"
 #include "PlayerSkillManagerComponent.h"
 #include "SkillUser.h"
+#include "TeleportableInterface.h"
 #include "Camera/CameraComponent.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "LostArkCharacter.generated.h"
@@ -22,7 +23,7 @@ enum class ELostArkCharacterState : uint8
 };
 
 UCLASS()
-class DREAMRAID_API ALostArkCharacter : public ACharacter, public IDeBuffInterface, public ISkillUser
+class DREAMRAID_API ALostArkCharacter : public ACharacter, public IDeBuffInterface, public ISkillUser, public ITeleportableInterface
 {
     GENERATED_BODY()
 
@@ -49,16 +50,14 @@ public:
     // 플레이어 현재 상태
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "State")
     ELostArkCharacterState CurrentState;
-
+    
+    UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category="Skill")
+    USkillData* GetActiveSkillData() const;
+    
     // 현재 활성 스킬 데이터 (PlayerSkillManagerComponent에서 관리할 수도 있으나, 이 예에서는 캐릭터에서 반환)
     UPROPERTY(BlueprintReadOnly, Category="Skill")
     class USkillData* CurrentSkillData;
 
-    // ISkillUser 인터페이스 구현 – 현재 활성 스킬 데이터를 반환
-    UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category="Skill")
-    USkillData* GetActiveSkillData() const;
-    virtual USkillData* GetActiveSkillData_Implementation() const override;
-    
     // 목표 좌표로 이동하는 함수
     UFUNCTION(BlueprintCallable, Category = "Movement")
     void MoveToDestination(const FVector& Destination);
@@ -75,4 +74,13 @@ public:
     virtual float GetDebuffRemainingTime_Implementation(EDebuffType DebuffType) const override;
     virtual void UpdateDebuffEffect_Implementation(EDebuffType DebuffType) override;
     virtual void OnDebuffExpired_Implementation(EDebuffType DebuffType) override;
+    
+    // ========== ISkillUser 구현 ==========
+    virtual USkillData* GetActiveSkillData_Implementation() const override;
+    
+    // ========== ITeleportableInterface 구현 ==========
+    virtual void PrepareForTeleport_Implementation() override;
+    virtual void FinishTeleport_Implementation() override;
+    
+    bool bCanMove = true;
 };

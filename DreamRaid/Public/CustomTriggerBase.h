@@ -2,9 +2,11 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "EffectAssetBase.h"
 #include "CustomTriggerBase.generated.h"
 
-/** 트리거 콜리전 모양 */
+DECLARE_LOG_CATEGORY_EXTERN(LogCustomTrigger, Log, All);
+
 UENUM(BlueprintType)
 enum class ETriggerShapeType : uint8
 {
@@ -15,9 +17,12 @@ enum class ETriggerShapeType : uint8
 };
 
 class UShapeComponent;
+class UBoxComponent;
+class USphereComponent;
+class UCapsuleComponent;
 class UBaseCollisionShape;
 
-UCLASS(Abstract) // 직접 인스턴스 불가
+UCLASS(Abstract)
 class DREAMRAID_API ACustomTriggerBase : public AActor
 {
     GENERATED_BODY()
@@ -25,68 +30,95 @@ class DREAMRAID_API ACustomTriggerBase : public AActor
 public:
     ACustomTriggerBase();
 
-protected:
-    /** 콜리전 형태 */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Trigger|Shape")
+    // 모양
+    UPROPERTY(EditAnywhere, Category="Trigger|Shape")
     ETriggerShapeType ShapeType = ETriggerShapeType::Box;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Trigger|Shape", meta=(EditCondition="ShapeType==ETriggerShapeType::Box"))
-    FVector BoxExtent = FVector(100.f);
+    // 박스
+    UPROPERTY(EditAnywhere, Category="Trigger|Shape", meta=(EditCondition="ShapeType==ETriggerShapeType::Box"))
+    FVector BoxExtent = FVector(150.f);
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Trigger|Shape", meta=(EditCondition="ShapeType==ETriggerShapeType::Sphere"))
-    float SphereRadius = 100.f;
+    // 원
+    UPROPERTY(EditAnywhere, Category="Trigger|Shape", meta=(EditCondition="ShapeType==ETriggerShapeType::Sphere"))
+    float SphereRadius = 150.f;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Trigger|Shape", meta=(EditCondition="ShapeType==ETriggerShapeType::Capsule"))
+    // 캡슐
+    UPROPERTY(EditAnywhere, Category="Trigger|Shape", meta=(EditCondition="ShapeType==ETriggerShapeType::Capsule"))
     float CapsuleRadius = 60.f;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Trigger|Shape", meta=(EditCondition="ShapeType==ETriggerShapeType::Capsule"))
-    float CapsuleHalfHeight = 100.f;
+    UPROPERTY(EditAnywhere, Category="Trigger|Shape", meta=(EditCondition="ShapeType==ETriggerShapeType::Capsule"))
+    float CapsuleHalfHeight = 120.f;
 
-    /** 커스텀 콜리전을 쓸 때 */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Trigger|Shape", meta=(EditCondition="ShapeType==ETriggerShapeType::Custom"))
-    UBaseCollisionShape* CustomCollisionShape;
+    // 커스텀
+    UPROPERTY(EditAnywhere, Category="Trigger|Shape", meta=(EditCondition="ShapeType==ETriggerShapeType::Custom"))
+    TObjectPtr<UBaseCollisionShape> CustomCollisionShape;
 
+    // 검사할 액터 종류(예, Character클래스)
+    UPROPERTY(EditAnywhere, Category="Trigger|Target")
+    TSubclassOf<AActor> TargetActorClass;
+
+    // 액터에 태그가 있는 경우만(예, Player)
+    UPROPERTY(EditAnywhere, Category="Trigger|Target")
+    FName RequiredTargetTag = NAME_None;
+    
+    // FX 데이터 에셋들
+    UPROPERTY(EditAnywhere, Instanced, Category="Trigger|FX")
+    UEffectAssetBase* FX_OnActorEnter;
+    
+    UPROPERTY(EditAnywhere, Instanced, Category="Trigger|FX")
+    UEffectAssetBase* FX_OnActorExit;
+    
+    UPROPERTY(EditAnywhere, Instanced, Category="Trigger|FX")
+    UEffectAssetBase* FX_OnAnyEnter;
+    
+    UPROPERTY(EditAnywhere, Instanced, Category="Trigger|FX")
+    UEffectAssetBase* FX_OnNoneInside;
+
+    
 protected:
-    /** 실제 충돌 컴포넌트 */
+    // 런타임 생성 콜리전 컴포넌트
     UPROPERTY()
-    UShapeComponent* CollisionComp = nullptr;
+    TObjectPtr<UShapeComponent> CollisionComp = nullptr;
 
-    /** 감지할 액터들 (자식이 자동 검색 or BP에서 설정) */
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Trigger|Detection")
-    TArray<AActor*> TargetActors;
-
-    /** 액터별 Inside 여부 추적 */
-    TMap<AActor*, bool> WasInsideMap;
-
-    /** 이전 프레임에 한 명이라도 있었는지 */
-    bool bHadPlayersLastFrame = false;
-
+    // 대상 목록 및 입장 상태 맵
+    UPROPERTY(Transient)
+    TArray<TObjectPtr<AActor>> TargetActors;
+    TMap<TObjectPtr<AActor>, bool> WasInsideMap;
+    
+    bool bWasAnyInside = false;
+    
+    
+    UPROPERTY(Transient)
+    TMap<UEffectAssetBase*, UObject*> ActiveEffectHandles;
 protected:
     virtual void OnConstruction(const FTransform& Transform) override;
-    virtual void BeginPlay() override;
-    virtual void Tick(float DeltaTime) override;
+    virtual void BeginPlay()  override;
+  
+    // overlap 이벤트 핸들러
+    UFUNCTION()
+    void OnTriggerBeginOverlap(UPrimitiveComponent* OverlappedComp,
+                               AActor* OtherActor,
+                               UPrimitiveComponent* OtherComp,
+                               int32 OtherBodyIndex,
+                               bool bFromSweep,
+                               const FHitResult& SweepResult);
 
-    /** 자식이 이를 override해서 TargetActors 채우거나, 다른 로직 가능 */
-    UFUNCTION(BlueprintNativeEvent, Category="Trigger")
-    void AutoFindActors();
+    UFUNCTION()
+    void OnTriggerEndOverlap(UPrimitiveComponent* OverlappedComp,
+                             AActor* OtherActor,
+                             UPrimitiveComponent* OtherComp,
+                             int32 OtherBodyIndex);
+    
+    virtual void EvaluateTrigger(); // 트리거 실행
 
-    virtual void AutoFindActors_Implementation();
-
-    /** 콜리전 컴포넌트 생성 */
-    void RebuildCollisionComponent();
-
-    UFUNCTION(BlueprintNativeEvent, Category="Trigger")
-    void OnTriggerActivated();
-
-    virtual void OnTriggerActivated_Implementation();
-
-    /** 진입/이탈 시점 */
-    void HandleTriggerEnter(AActor* Actor);
-    void HandleTriggerExit(AActor* Actor);
-
-    /** HasPlayers, NoPlayers (자식이 필요 없다면 override 안 해도 됨) */
-    UFUNCTION(BlueprintNativeEvent, Category="Trigger")
-    void UpdateHasPlayersFX(bool bAnyInside);
-
-    virtual void UpdateHasPlayersFX_Implementation(bool bAnyInside);
+    void RunFX(UEffectAssetBase* FXData, FVector Location, FRotator Rotation);
+    void StopFX(UEffectAssetBase* FXData, UObject* EffectHandle = nullptr);
+    
+    void RefreshTargetActors(); // 타겟 액터 확인 클래스
+    void RebuildCollisionComponent();   // 리빌드 콜리전 컴포넌트
+    
+    bool AreAllTargetsInside() const;   // 모든
+    bool IsAnyoneInside() const;    // 하나라도
+    bool IsActorInside(AActor* Actor) const;    // 해당 액터
+    
 };

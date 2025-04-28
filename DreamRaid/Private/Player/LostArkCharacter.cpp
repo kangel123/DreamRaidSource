@@ -1,5 +1,6 @@
 #include "LostArkCharacter.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "CustomPlayerController.h"
 #include "Engine/Engine.h" // 로그 출력용
 
 ALostArkCharacter::ALostArkCharacter()
@@ -44,6 +45,7 @@ USkillData* ALostArkCharacter::GetActiveSkillData_Implementation() const
 void ALostArkCharacter::MoveToDestination(const FVector& Destination)
 {
     // 입력된 Destination으로 이동: AddMovementInput을 이용하여 자연스러운 이동 구현
+    if(!bCanMove) return;
     FVector Direction = (Destination - GetActorLocation()).GetSafeNormal();
     AddMovementInput(Direction, 1.0f);
 }
@@ -95,4 +97,26 @@ void ALostArkCharacter::OnDebuffExpired_Implementation(EDebuffType DebuffType)
 {
     UE_LOG(LogTemp, Log, TEXT("Debuff Expired: %d"), (uint8)DebuffType);
     SetCharacterState(ELostArkCharacterState::Normal);
+}
+
+void ALostArkCharacter::PrepareForTeleport_Implementation()
+{
+    bCanMove = false;
+    if (APlayerController* PC = Cast<APlayerController>(GetController()))
+    {
+        PC->SetIgnoreMoveInput(true);
+    }
+}
+
+void ALostArkCharacter::FinishTeleport_Implementation()
+{
+    bCanMove = true;
+    if (APlayerController* PC = Cast<APlayerController>(GetController()))
+    {
+        PC->SetIgnoreMoveInput(false);
+        if (auto* MyPC = Cast<ACustomPlayerController>(PC))
+        {
+            MyPC->ClearMoveRequest();   // ← 여기서 이동 요청을 지워 줍니다.
+        }
+    }
 }

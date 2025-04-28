@@ -12,7 +12,7 @@ class DREAMRAID_API ACustomPlayerController : public APlayerController
 public:
     ACustomPlayerController();
     virtual void Tick(float DeltaSeconds) override;
-                                       
+    
 protected:
     virtual void SetupInputComponent() override;
 
@@ -46,7 +46,9 @@ protected:
     void OnNormalSkillDPressed();
     UFUNCTION()
     void OnNormalSkillFPressed();
-
+    
+public:
+    void ClearMoveRequest() { bHasValidTarget = false; }
 private:
     // 우클릭으로 지정한 목표 위치
     FVector TargetLocation;

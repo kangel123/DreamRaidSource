@@ -11,6 +11,7 @@ public class DreamRaidEditorTarget : TargetRules
         IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_5;
         CppStandard = CppStandardVersion.Cpp20;
 
+
         ExtraModuleNames.AddRange(new string[] { "DreamRaid" });
     }
 }

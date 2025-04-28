@@ -1,18 +1,75 @@
 #include "CustomTriggerBase.h"
+#include "Engine/World.h"
+#include "TimerManager.h"
+#include "Kismet/GameplayStatics.h"
 #include "Components/BoxComponent.h"
 #include "Components/SphereComponent.h"
-#include "BaseCollisionShape.h"
 #include "Components/CapsuleComponent.h"
+#include "BaseCollisionShape.h"
+
+DEFINE_LOG_CATEGORY(LogCustomTrigger);
 
 ACustomTriggerBase::ACustomTriggerBase()
 {
-    PrimaryActorTick.bCanEverTick = true;
+    RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
+    
+    PrimaryActorTick.bCanEverTick = false;
+    TargetActorClass = APawn::StaticClass();
 }
 
 void ACustomTriggerBase::OnConstruction(const FTransform& Transform)
 {
-    Super::OnConstruction(Transform);
     RebuildCollisionComponent();
+}
+
+void ACustomTriggerBase::BeginPlay()
+{
+    Super::BeginPlay();
+    RefreshTargetActors();
+    EvaluateTrigger();
+}
+
+bool ACustomTriggerBase::AreAllTargetsInside() const
+{
+    for (AActor* A : TargetActors)
+    {
+        if (!IsActorInside(A)) return false;
+    }
+    return TargetActors.Num() > 0;  // 타겟이 정해져 있지 않을 수도 있으므로
+}
+
+bool ACustomTriggerBase::IsAnyoneInside() const
+{
+    for (AActor* A : TargetActors)
+    {
+        if (IsActorInside(A)) return true;
+    }
+    return false;
+}
+
+void ACustomTriggerBase::RefreshTargetActors()
+{
+    TargetActors.Empty();
+
+    if (!TargetActorClass) return;
+
+    TArray<AActor*> Found;
+    UGameplayStatics::GetAllActorsOfClass(GetWorld(), TargetActorClass, Found);
+
+    // 모든 액터에 대해서
+    for (AActor* A : Found)
+    {
+        // 트리거 내에 태그가 정해져 있지 않거나 특정 태그를 보유하고 있는 경우
+        if (RequiredTargetTag == NAME_None || A->ActorHasTag(RequiredTargetTag))
+        {
+            TargetActors.Add(A);
+            WasInsideMap.Add(A, false);
+        }
+    }
+
+    // 로그
+    UE_LOG(LogCustomTrigger, Log, TEXT("[%s] Found %d target actors."),
+           *GetName(), TargetActors.Num());
 }
 
 void ACustomTriggerBase::RebuildCollisionComponent()
@@ -23,181 +80,130 @@ void ACustomTriggerBase::RebuildCollisionComponent()
         CollisionComp = nullptr;
     }
 
-    if (ShapeType == ETriggerShapeType::Custom)
-    {
-        // custom 모드면 별도 콜리전 x
-        return;
-    }
-
-    UShapeComponent* NewComp = nullptr;
     switch (ShapeType)
     {
     case ETriggerShapeType::Box:
-        {
-            UBoxComponent* BoxComp = NewObject<UBoxComponent>(this, UBoxComponent::StaticClass(), TEXT("BoxTrigger"));
-            BoxComp->InitBoxExtent(BoxExtent);
-            NewComp = BoxComp;
-        }
+    {
+        UBoxComponent* Box = NewObject<UBoxComponent>(this, TEXT("BoxCollision"));
+        Box->InitBoxExtent(BoxExtent);
+        CollisionComp = Box;
         break;
+    }
     case ETriggerShapeType::Sphere:
-        {
-            USphereComponent* SphereComp = NewObject<USphereComponent>(this, USphereComponent::StaticClass(), TEXT("SphereTrigger"));
-            SphereComp->InitSphereRadius(SphereRadius);
-            NewComp = SphereComp;
-        }
+    {
+        USphereComponent* Sphere = NewObject<USphereComponent>(this, TEXT("SphereCollision"));
+        Sphere->InitSphereRadius(SphereRadius);
+        CollisionComp = Sphere;
         break;
+    }
     case ETriggerShapeType::Capsule:
-        {
-            UCapsuleComponent* CapsuleComp = NewObject<UCapsuleComponent>(this, UCapsuleComponent::StaticClass(), TEXT("CapsuleTrigger"));
-            CapsuleComp->InitCapsuleSize(CapsuleRadius, CapsuleHalfHeight);
-            NewComp = CapsuleComp;
-        }
-        break;
-    default:
+    {
+        UCapsuleComponent* Cap = NewObject<UCapsuleComponent>(this, TEXT("CapsuleCollision"));
+        Cap->InitCapsuleSize(CapsuleRadius, CapsuleHalfHeight);
+        CollisionComp = Cap;
         break;
     }
+    case ETriggerShapeType::Custom:
+        break;
+    }
 
-    CollisionComp = NewComp;
-    if (CollisionComp)
+    if (!CollisionComp)
     {
-        CollisionComp->SetCollisionProfileName(TEXT("Trigger"));
-        CollisionComp->SetGenerateOverlapEvents(true);
-        CollisionComp->RegisterComponent();
+        return;
+    }
 
-        if (!RootComponent)
+    UPrimitiveComponent* Prim = Cast<UPrimitiveComponent>(CollisionComp);
+    Prim->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+    Prim->SetGenerateOverlapEvents(true);
+    Prim->SetCollisionObjectType(ECC_WorldDynamic);
+    Prim->SetCollisionResponseToAllChannels(ECR_Ignore);
+    Prim->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+
+    Prim->OnComponentBeginOverlap.AddDynamic(this, &ACustomTriggerBase::OnTriggerBeginOverlap);
+    Prim->OnComponentEndOverlap.AddDynamic(this, &ACustomTriggerBase::OnTriggerEndOverlap);
+
+    CollisionComp->SetupAttachment(RootComponent);
+    CollisionComp->RegisterComponent();
+}
+
+bool ACustomTriggerBase::IsActorInside(AActor* Actor) const
+{
+    if (!IsValid(Actor)) return false;
+
+    if (ShapeType == ETriggerShapeType::Custom && CustomCollisionShape)
+    {
+        return CustomCollisionShape->IsOverlapping(Actor, GetActorLocation(), GetActorRotation());
+    }
+
+    return CollisionComp && CollisionComp->IsOverlappingActor(Actor);
+}
+
+void ACustomTriggerBase::EvaluateTrigger() {
+    
+    const bool bAnyInside = IsAnyoneInside();
+
+    if (bAnyInside && !bWasAnyInside)
+    {
+        StopFX(FX_OnNoneInside);
+        RunFX(FX_OnAnyEnter, GetActorLocation(), GetActorRotation());
+    }
+    else if (!bAnyInside && bWasAnyInside)
+    {
+        StopFX(FX_OnAnyEnter);
+        RunFX(FX_OnNoneInside, GetActorLocation(), GetActorRotation());
+    }
+    bWasAnyInside = bAnyInside;
+}
+
+void ACustomTriggerBase::OnTriggerBeginOverlap(UPrimitiveComponent* Comp, AActor* OtherActor,
+                                               UPrimitiveComponent* OtherComp, int32 Idx,
+                                               bool bSweep, const FHitResult& Hit)
+{
+    // 대상 배열에 있으면 상태 true 로
+    if (WasInsideMap.Contains(OtherActor))
+    {
+        WasInsideMap[OtherActor] = true;
+        RunFX(FX_OnActorEnter, OtherActor->GetActorLocation(), OtherActor->GetActorRotation());
+        EvaluateTrigger();
+    }
+}
+
+void ACustomTriggerBase::OnTriggerEndOverlap(UPrimitiveComponent* Comp, AActor* OtherActor,
+                                             UPrimitiveComponent* OtherComp, int32 Idx)
+{
+    if (WasInsideMap.Contains(OtherActor))
+    {
+        WasInsideMap[OtherActor] = false;
+        RunFX(FX_OnActorExit, OtherActor->GetActorLocation(), OtherActor->GetActorRotation());
+        EvaluateTrigger();
+    }
+    
+}
+
+void ACustomTriggerBase::RunFX(UEffectAssetBase* FXData, FVector Location, FRotator Rotation)
+{
+    if (FXData)
+    {
+        UObject* Handle = FXData->StartEffect(this, Location, Rotation);
+        if (Handle)
         {
-            RootComponent = CollisionComp;
-        }
-        else
-        {
-            CollisionComp->AttachToComponent(RootComponent, FAttachmentTransformRules::KeepWorldTransform);
+            ActiveEffectHandles.Add(FXData, Handle);
         }
     }
 }
 
-void ACustomTriggerBase::BeginPlay()
+void ACustomTriggerBase::StopFX(UEffectAssetBase* FXData, UObject* EffectHandle)
 {
-    Super::BeginPlay();
-
-    // 자식이 override 가능
-    AutoFindActors();
-
-    // 초기화
-    for (AActor* Actor : TargetActors)
+    if (EffectHandle)
     {
-        WasInsideMap.Add(Actor, false);
+        FXData->StopEffect(EffectHandle);
+        ActiveEffectHandles.Remove(FXData);
+        return;
     }
-
-    bHadPlayersLastFrame = false;
-}
-
-void ACustomTriggerBase::AutoFindActors_Implementation()
-{
-    // 기본 구현: 아무것도 안 함 -> 자식이 필요하면 override
-}
-
-void ACustomTriggerBase::Tick(float DeltaTime)
-{
-    Super::Tick(DeltaTime);
-
-    // 커스텀 콜리전?
-    if (ShapeType == ETriggerShapeType::Custom)
+    
+    if (UObject** StoredHandle = ActiveEffectHandles.Find(FXData))
     {
-        if (!CustomCollisionShape || TargetActors.Num() == 0) return;
-
-        bool bAnyInside = false;
-
-        for (AActor* Actor : TargetActors)
-        {
-            if (!Actor) continue;
-
-            bool bWasInside = WasInsideMap[Actor];
-            bool bIsInside = CustomCollisionShape->IsOverlapping(Actor, GetActorLocation(), GetActorRotation());
-
-            if (!bWasInside && bIsInside)
-            {
-                WasInsideMap[Actor] = true;
-                HandleTriggerEnter(Actor);
-            }
-            else if (bWasInside && !bIsInside)
-            {
-                WasInsideMap[Actor] = false;
-                HandleTriggerExit(Actor);
-            }
-
-            if (bIsInside) bAnyInside = true;
-        }
-
-        if (bAnyInside && !bHadPlayersLastFrame)
-        {
-            UpdateHasPlayersFX(true);
-        }
-        else if (!bAnyInside && bHadPlayersLastFrame)
-        {
-            UpdateHasPlayersFX(false);
-        }
-        bHadPlayersLastFrame = bAnyInside;
-
-        // 예: 조건 만족 시점에 OnTriggerActivated()를 호출해도 됨
-        // 자식이 override해서 사용
+        FXData->StopEffect(*StoredHandle);
+        ActiveEffectHandles.Remove(FXData);
     }
-    else
-    {
-        // box / sphere / capsule
-        if (!CollisionComp || TargetActors.Num() == 0) return;
-
-        TArray<AActor*> Overlaps;
-        CollisionComp->GetOverlappingActors(Overlaps);
-
-        bool bAnyInside = false;
-        for (AActor* Actor : TargetActors)
-        {
-            if (!Actor) continue;
-
-            bool bWasInside = WasInsideMap[Actor];
-            bool bIsInside = Overlaps.Contains(Actor);
-
-            if (!bWasInside && bIsInside)
-            {
-                WasInsideMap[Actor] = true;
-                HandleTriggerEnter(Actor);
-            }
-            else if (bWasInside && !bIsInside)
-            {
-                WasInsideMap[Actor] = false;
-                HandleTriggerExit(Actor);
-            }
-            if (bIsInside) bAnyInside = true;
-        }
-
-        if (bAnyInside && !bHadPlayersLastFrame)
-        {
-            UpdateHasPlayersFX(true);
-        }
-        else if (!bAnyInside && bHadPlayersLastFrame)
-        {
-            UpdateHasPlayersFX(false);
-        }
-        bHadPlayersLastFrame = bAnyInside;
-    }
-}
-
-void ACustomTriggerBase::HandleTriggerEnter(AActor* Actor)
-{
-    // 자식이 필요하면 override
-}
-
-void ACustomTriggerBase::HandleTriggerExit(AActor* Actor)
-{
-    // 자식이 필요하면 override
-}
-
-void ACustomTriggerBase::UpdateHasPlayersFX_Implementation(bool bAnyInside)
-{
-    // 기본 구현 없음
-}
-
-void ACustomTriggerBase::OnTriggerActivated_Implementation()
-{
-    // 자식 override
 }

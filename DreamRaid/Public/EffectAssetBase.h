@@ -2,9 +2,10 @@
 
 #include "CoreMinimal.h"
 #include "UObject/NoExportTypes.h"
+#include "EffectSettings.h"
 #include "EffectAssetBase.generated.h"
 
-UCLASS(Abstract, EditInlineNew, BlueprintType, DefaultToInstanced)
+UCLASS(Abstract, EditInlineNew, BlueprintType)
 class DREAMRAID_API UEffectAssetBase : public UObject
 {
     GENERATED_BODY()
@@ -12,21 +13,21 @@ class DREAMRAID_API UEffectAssetBase : public UObject
 public:
     UEffectAssetBase();
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Effect")
-    bool bReuseExistingComponent;
+    /** 부착 설정 */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Effect")
+    FEffectAttachmentSettings Attachment;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Effect", meta = (EditCondition = "bReuseExistingComponent"))
-    USceneComponent* PreExistingComponent;
+    /** 수명 설정 */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Effect")
+    FEffectLifetimeSettings Lifetime;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Effect")
-    FName ComponentAttachSocket;
+    /** 효과 시작 – 리턴값은 생성된 컴포넌트나 핸들로 쓰입니다 */
+    UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category="Effect")
+    UObject* StartEffect(AActor* Owner, FVector Location, FRotator Rotation);
+    virtual UObject* StartEffect_Implementation(AActor* Owner, FVector Location, FRotator Rotation) PURE_VIRTUAL(UEffectAssetBase::StartEffect_Implementation, return nullptr;);
 
-
-    UFUNCTION(BlueprintCallable, Category = "Effect")
-    virtual UObject* StartEffect(AActor* OwnerActor,FVector CustomLocation, FRotator CustomRotation)
-        PURE_VIRTUAL(UEffectAssetBase::StartEffect, return nullptr;);
-
-    UFUNCTION(BlueprintCallable, Category = "Effect")
-    virtual void StopEffect(UObject* EffectComponent)
-        PURE_VIRTUAL(UEffectAssetBase::StopEffect, );
+    /** 효과 중지 */
+    UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category="Effect")
+    void StopEffect(UObject* EffectHandle);
+    virtual void StopEffect_Implementation(UObject* EffectHandle) PURE_VIRTUAL(UEffectAssetBase::StopEffect_Implementation, );
 };
